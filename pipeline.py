@@ -1,8 +1,9 @@
-"""流水线编排 - 第一阶段：识别 + 归档"""
+"""流水线编排 - 第一阶段：分批循环识别 + 归档"""
 
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from domain.order import Order, OrderStatus
 from domain.photo import Photo
 from services.recognizer import Recognizer
@@ -12,20 +13,13 @@ import config
 
 @dataclass
 class 运行结果:
-    """运行结果 - 第一阶段"""
     订单表: Dict[str, Order]
     已归档: List[Order]
     待定: List[Photo]
 
 
 class 流水线:
-    """流水线编排 - 第一阶段：识别 + 归档"""
-
-    def __init__(
-        self,
-        识别器: Recognizer,
-        输出器: Writer,
-    ):
+    def __init__(self, 识别器: Recognizer, 输出器: Writer):
         self.识别器 = 识别器
         self.输出器 = 输出器
 
@@ -34,13 +28,6 @@ class 流水线:
         输入文件夹: str,
         进度回调: Optional[Callable[[int, int, str], None]] = None,
     ) -> 运行结果:
-        """
-        运行流水线（第一阶段：边识别边归档）
-        输入文件夹: 包含照片的文件夹
-        进度回调: 回调函数(已处理数, 总数, 当前文件名)
-        返回: 运行结果（订单表、已归档、待定）
-        """
-        # 1. 遍历文件夹取图片
         图片列表 = self._取图片列表(输入文件夹)
         总数 = len(图片列表)
         if 总数 == 0:
@@ -48,66 +35,81 @@ class 流水线:
 
         订单表: Dict[str, Order] = {}
         待定列表: List[Photo] = []
+        失败次数: Dict[str, int] = {}
         已处理 = 0
 
-        # 2. 遍历图片：识别 → 归档
-        for path in 图片列表:
-            try:
-                # 识别
-                photo = self.识别器.识别(path)
-                photo.状态 = OrderStatus.归档中
+        while True:
+            剩余 = self._取图片列表(输入文件夹)
+            可处理 = [p for p in 剩余 if 失败次数.get(p, 0) < config.MAX_ROUNDS_PER_IMAGE]
+            if not 可处理:
+                break
 
-                # 归档
+            批次 = 可处理[:config.BATCH_SIZE]
+            结果们 = self._识别一批(批次)
+
+            for path, (photo, err) in zip(批次, 结果们):
+                if err is not None:
+                    失败次数[path] = 失败次数.get(path, 0) + 1
+                    print(f"[流水线] 识别失败(第{失败次数[path]}轮) {os.path.basename(path)}: {err}")
+                    if 失败次数[path] >= config.MAX_ROUNDS_PER_IMAGE:
+                        失败照片 = Photo(path=path)
+                        self.输出器.移入失败(失败照片)
+                        待定列表.append(失败照片)
+                        已处理 += 1
+                        if 进度回调:
+                            进度回调(已处理, 总数, os.path.basename(path))
+                    continue
+
                 self.输出器.归档(photo)
-                photo.状态 = OrderStatus.已归档
-
-                # 按车牌分组
                 if photo.plate is None:
-                    # 无车牌，计入待定
                     待定列表.append(photo)
                 else:
-                    # 有车牌，加入订单表
                     if photo.plate not in 订单表:
                         订单表[photo.plate] = Order(车牌=photo.plate, 状态=OrderStatus.归档中)
                     订单表[photo.plate].加照片(photo)
-
-            except Exception as e:
-                # 识别失败，创建待定照片
-                filename = os.path.basename(path)
-                photo = Photo(path=path)
-                待定列表.append(photo)
-                print(f"[流水线] 识别失败 {filename}: {e}")
-
-            finally:
                 已处理 += 1
                 if 进度回调:
                     进度回调(已处理, 总数, os.path.basename(path))
 
-        # 3. 收尾：重命名文件夹
         self.输出器.收尾定名(订单表)
-
-        # 更新订单状态
         for order in 订单表.values():
             order.状态 = OrderStatus.已归档
 
-        已归档列表 = list(订单表.values())
-
         return 运行结果(
             订单表=订单表,
-            已归档=已归档列表,
+            已归档=list(订单表.values()),
             待定=待定列表,
         )
 
+    def _识别一批(self, 批次: List[str]):
+        结果: List = [None] * len(批次)
+
+        def 识别单张(i: int, path: str):
+            try:
+                return i, self.识别器.识别(path), None
+            except Exception as e:
+                return i, None, e
+
+        并发数 = max(1, min(len(批次), config.BATCH_SIZE))
+        with ThreadPoolExecutor(max_workers=并发数) as 执行器:
+            futures = [执行器.submit(识别单张, i, p) for i, p in enumerate(批次)]
+            for f in as_completed(futures):
+                i, photo, err = f.result()
+                结果[i] = (photo, err)
+        return 结果
+
     @staticmethod
     def _取图片列表(文件夹: str) -> List[str]:
-        """获取文件夹内所有图片文件（jpg, jpeg, png, bmp, pdf）"""
         支持的扩展名 = {'.jpg', '.jpeg', '.png', '.bmp', '.pdf'}
         图片列表 = []
         if not os.path.exists(文件夹):
             return 图片列表
 
         for filename in os.listdir(文件夹):
+            full = os.path.join(文件夹, filename)
+            if not os.path.isfile(full):
+                continue
             if os.path.splitext(filename.lower())[1] in 支持的扩展名:
-                图片列表.append(os.path.join(文件夹, filename))
+                图片列表.append(full)
 
         return 图片列表
