@@ -4,11 +4,11 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from models import Order, OrderStatus, Photo
-from recognizer import Recognizer
-from writer import Writer
-from validator import Validator
-from collager import Collager
+from core.models import Order, OrderStatus, Photo
+from steps.recognizer import Recognizer
+from steps.writer import Writer
+from steps.validator import Validator
+from steps.collager import Collager
 import config
 
 

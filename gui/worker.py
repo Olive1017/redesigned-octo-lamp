@@ -1,10 +1,10 @@
 """后台任务线程 - QThread 运行流水线（归档 Worker + 拼图 Worker）"""
 
 from PySide6.QtCore import QThread, Signal
-from recognizer import Recognizer
-from writer import Writer
-from validator import Validator
-from collager import Collager
+from steps.recognizer import Recognizer
+from steps.writer import Writer
+from steps.validator import Validator
+from steps.collager import Collager
 from pipeline import 流水线, 运行结果, 拼图流水线, 拼图结果
 
 
