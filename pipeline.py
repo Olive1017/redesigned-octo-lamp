@@ -1,24 +1,35 @@
-"""流水线编排 - 第一阶段：分批循环识别 + 归档"""
+"""流水线编排 - 第一阶段：分批循环识别+归档；第二阶段：校验+拼图"""
 
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from domain.order import Order, OrderStatus
-from domain.photo import Photo
-from services.recognizer import Recognizer
-from services.writer import Writer
+from models import Order, OrderStatus, Photo
+from recognizer import Recognizer
+from writer import Writer
+from validator import Validator
+from collager import Collager
 import config
 
 
 @dataclass
 class 运行结果:
+    """第一阶段运行结果"""
     订单表: Dict[str, Order]
     已归档: List[Order]
     待定: List[Photo]
 
 
+@dataclass
+class 拼图结果:
+    """第二阶段运行结果"""
+    已拼图: List[Order]
+    待人工: List[Order]
+
+
 class 流水线:
+    """第一阶段：分批循环识别 + 归档"""
+
     def __init__(self, 识别器: Recognizer, 输出器: Writer):
         self.识别器 = 识别器
         self.输出器 = 输出器
@@ -104,12 +115,44 @@ class 流水线:
         图片列表 = []
         if not os.path.exists(文件夹):
             return 图片列表
-
         for filename in os.listdir(文件夹):
             full = os.path.join(文件夹, filename)
             if not os.path.isfile(full):
                 continue
             if os.path.splitext(filename.lower())[1] in 支持的扩展名:
                 图片列表.append(full)
-
         return 图片列表
+
+
+class 拼图流水线:
+    """第二阶段：遭历已归档订单 → 校验 → 齐全则拼图，不齐记「待人工」"""
+
+    def __init__(self, 校验器: Validator, 拼图器: Collager):
+        self.校验器 = 校验器
+        self.拼图器 = 拼图器
+
+    def 运行(
+        self,
+        订单表: Dict[str, Order],
+        进度回调: Optional[Callable[[int, int, str], None]] = None,
+    ) -> 拼图结果:
+        已拼图: List[Order] = []
+        待人工: List[Order] = []
+        订单列表 = list(订单表.values())
+        总数 = len(订单列表)
+
+        for i, order in enumerate(订单列表, 1):
+            齐全, 原因 = self.校验器.校验(order)
+            if not 齐全:
+                order.状态 = OrderStatus.标黄人工
+                order.异常原因 = 原因
+                待人工.append(order)
+            else:
+                self.拼图器.生成二合一(order)
+                self.拼图器.生成三合一(order)
+                order.状态 = OrderStatus.已拼图
+                已拼图.append(order)
+            if 进度回调:
+                进度回调(i, 总数, order.车牌)
+
+        return 拼图结果(已拼图=已拼图, 待人工=待人工)
