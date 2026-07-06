@@ -18,17 +18,16 @@ OCR_CONFIG = "{}"
 OCR_IF_NEED_OCR = "true"
 
 # 分批识别配置
-# 公司大模型一次只能识别几张，太多会识别失败，所以分批循环处理
-BATCH_SIZE = 5              # 每轮（每批）识别的图片数
-MAX_ROUNDS_PER_IMAGE = 3   # 单张图片最多重试的轮次，超过则移入 _识别失败/
+# 公司大模型一次只能识别几张，太多会识别失败，所以每个子文件夹内分批识别
+BATCH_SIZE = 5              # 每批识别的图片数
+MAX_ROUNDS_PER_IMAGE = 3   # 识别失败的图片最多重试的轮次，超过则该文件夹标黄人工
 
 # 拼图参数
 COLLAGE_BACKGROUND_COLOR = (255, 255, 255)  # 白色背景
 COLLAGE_QUALITY = 95
 
-# 输入输出路径
+# 输入路径
 DEFAULT_INPUT_DIR = ""
-OUTPUT_DIR = "output"
 
 # 并发配置
 MAX_WORKERS = 20

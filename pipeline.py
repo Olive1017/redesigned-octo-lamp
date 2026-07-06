@@ -1,10 +1,16 @@
-"""流水线编排 - 第一阶段：分批循环识别+归档；第二阶段：校验+拼图"""
+"""流水线编排 - 一键一条龙：逐子文件夹 识别→就地改名→校验→拼图→改文件夹名
+
+人工已按车牌把图片分到各子文件夹（每个子文件夹 = 一个车牌 = 一个订单）。
+本流水线遭历父文件夹下的每个子文件夹，逐个走完整链路。
+- 车牌以子文件夹名为准，识别返回的车牌仅作交叉校验。
+- 已处理过的文件夹（名带交货单号 / 已有拼图）自动跳过（幂等、可断点续跑）。
+"""
 
 import os
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Callable
+from dataclasses import dataclass, field
+from typing import List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from core.models import Order, OrderStatus, Photo
+from core.models import Order, OrderStatus
 from steps.recognizer import Recognizer
 from steps.writer import Writer
 from steps.validator import Validator
@@ -13,84 +19,100 @@ import config
 
 
 @dataclass
-class 运行结果:
-    """第一阶段运行结果"""
-    订单表: Dict[str, Order]
-    已归档: List[Order]
-    待定: List[Photo]
-
-
-@dataclass
-class 拼图结果:
-    """第二阶段运行结果"""
-    已拼图: List[Order]
-    待人工: List[Order]
+class 处理结果:
+    """一键一条龙运行结果"""
+    已完成: List[Order] = field(default_factory=list)   # 识别+拼图+改名成功
+    待人工: List[Order] = field(default_factory=list)   # 不齐全 / 识别失败
+    已跳过: List[str] = field(default_factory=list)      # 幂等跳过的文件夹名
 
 
 class 流水线:
-    """第一阶段：分批循环识别 + 归档"""
+    """一键一条龙：遭历父文件夹下的车牌子文件夹，逐个处理"""
 
-    def __init__(self, 识别器: Recognizer, 输出器: Writer):
+    支持的扩展名 = {'.jpg', '.jpeg', '.png', '.bmp', '.pdf'}
+
+    def __init__(self, 识别器: Recognizer, 输出器: Writer, 校验器: Validator, 拼图器: Collager):
         self.识别器 = 识别器
         self.输出器 = 输出器
+        self.校验器 = 校验器
+        self.拼图器 = 拼图器
 
     def 运行(
         self,
-        输入文件夹: str,
+        父文件夹: str,
         进度回调: Optional[Callable[[int, int, str], None]] = None,
-    ) -> 运行结果:
-        图片列表 = self._取图片列表(输入文件夹)
-        总数 = len(图片列表)
+    ) -> 处理结果:
+        子文件夹s = self._取子文件夹(父文件夹)
+        结果 = 处理结果()
+        总数 = len(子文件夹s)
         if 总数 == 0:
-            return 运行结果(订单表={}, 已归档=[], 待定=[])
+            return 结果
 
-        订单表: Dict[str, Order] = {}
-        待定列表: List[Photo] = []
-        失败次数: Dict[str, int] = {}
-        已处理 = 0
+        for i, 子路径 in enumerate(子文件夹s, 1):
+            车牌 = os.path.basename(子路径)
+            if 进度回调:
+                进度回调(i, 总数, 车牌)
 
-        while True:
-            剩余 = self._取图片列表(输入文件夹)
-            可处理 = [p for p in 剩余 if 失败次数.get(p, 0) < config.MAX_ROUNDS_PER_IMAGE]
-            if not 可处理:
-                break
+            # 幂等：跳过已处理的文件夹
+            if self.输出器.是否已处理(子路径):
+                结果.已跳过.append(车牌)
+                continue
 
-            批次 = 可处理[:config.BATCH_SIZE]
-            结果们 = self._识别一批(批次)
+            order = self._处理文件夹(子路径, 车牌)
+            if order.状态 == OrderStatus.已拼图:
+                结果.已完成.append(order)
+            else:
+                结果.待人工.append(order)
 
-            for path, (photo, err) in zip(批次, 结果们):
-                if err is not None:
-                    失败次数[path] = 失败次数.get(path, 0) + 1
-                    print(f"[流水线] 识别失败(第{失败次数[path]}轮) {os.path.basename(path)}: {err}")
-                    if 失败次数[path] >= config.MAX_ROUNDS_PER_IMAGE:
-                        失败照片 = Photo(path=path)
-                        self.输出器.移入失败(失败照片)
-                        待定列表.append(失败照片)
-                        已处理 += 1
-                        if 进度回调:
-                            进度回调(已处理, 总数, os.path.basename(path))
-                    continue
+        return 结果
 
-                self.输出器.归档(photo)
-                if photo.plate is None:
-                    待定列表.append(photo)
-                else:
-                    if photo.plate not in 订单表:
-                        订单表[photo.plate] = Order(车牌=photo.plate, 状态=OrderStatus.归档中)
-                    订单表[photo.plate].加照片(photo)
-                已处理 += 1
-                if 进度回调:
-                    进度回调(已处理, 总数, os.path.basename(path))
+    def _处理文件夹(self, 子路径: str, 车牌: str) -> Order:
+        order = Order(车牌=车牌, 文件夹路径=子路径, 状态=OrderStatus.归档中)
+        待识别 = self._取图片列表(子路径)
+        if not 待识别:
+            order.状态 = OrderStatus.标黄人工
+            order.异常原因 = "文件夹内无图片"
+            return order
 
-        self.输出器.收尾定名(订单表)
-        for order in 订单表.values():
-            order.状态 = OrderStatus.已归档
+        # 1. 分批识别（大模型一次只能识别几张），失败的图片按轮次重试
+        轮次 = 0
+        while 待识别 and 轮次 < config.MAX_ROUNDS_PER_IMAGE:
+            轮次 += 1
+            失败 = []
+            for 批次 in self._分批(待识别, config.BATCH_SIZE):
+                for path, (photo, err) in zip(批次, self._识别一批(批次)):
+                    if err is not None or photo is None:
+                        失败.append(path)
+                        continue
+                    # 2. 车牌以文件夹名为准，识别车牌仅作校验
+                    if photo.plate and photo.plate != 车牌:
+                        print(f"[流水线] 车牌不一致：文件夹={车牌} 识别={photo.plate}（以文件夹名为准）")
+                    photo.plate = 车牌
+                    order.加照片(photo)
+                    # 3. 就地重命名图片 {车牌}_{类别}
+                    self.输出器.重命名图片(photo)
+            待识别 = 失败
 
-        return 运行结果(
-            订单表=订单表,
-            已归档=list(订单表.values()),
-            待定=待定列表,
-        )
+        if 待识别:
+            order.状态 = OrderStatus.标黄人工
+            order.异常原因 = "识别失败: " + "、".join(os.path.basename(p) for p in 待识别)
+            return order
+
+        # 4. 校验五类齐全
+        齐全, 原因 = self.校验器.校验(order)
+        if not 齐全:
+            order.状态 = OrderStatus.标黄人工
+            order.异常原因 = 原因
+            return order
+
+        # 5. 拼图（二合一/三合一）写进本文件夹
+        self.拼图器.生成二合一(order)
+        self.拼图器.生成三合一(order)
+
+        # 6. 拼完改文件夹名：{车牌} → {车牌}_{交货单号}
+        self.输出器.文件夹改名(order)
+        order.状态 = OrderStatus.已拼图
+        return order
 
     def _识别一批(self, 批次: List[str]):
         结果: List = [None] * len(批次)
@@ -110,49 +132,22 @@ class 流水线:
         return 结果
 
     @staticmethod
-    def _取图片列表(文件夹: str) -> List[str]:
-        支持的扩展名 = {'.jpg', '.jpeg', '.png', '.bmp', '.pdf'}
-        图片列表 = []
-        if not os.path.exists(文件夹):
-            return 图片列表
+    def _分批(seq: List[str], size: int):
+        for i in range(0, len(seq), size):
+            yield seq[i:i + size]
+
+    def _取子文件夹(self, 父文件夹: str) -> List[str]:
+        if not os.path.isdir(父文件夹):
+            return []
+        return sorted(
+            os.path.join(父文件夹, d) for d in os.listdir(父文件夹)
+            if os.path.isdir(os.path.join(父文件夹, d))
+        )
+
+    def _取图片列表(self, 文件夹: str) -> List[str]:
+        图片 = []
         for filename in os.listdir(文件夹):
             full = os.path.join(文件夹, filename)
-            if not os.path.isfile(full):
-                continue
-            if os.path.splitext(filename.lower())[1] in 支持的扩展名:
-                图片列表.append(full)
-        return 图片列表
-
-
-class 拼图流水线:
-    """第二阶段：遭历已归档订单 → 校验 → 齐全则拼图，不齐记「待人工」"""
-
-    def __init__(self, 校验器: Validator, 拼图器: Collager):
-        self.校验器 = 校验器
-        self.拼图器 = 拼图器
-
-    def 运行(
-        self,
-        订单表: Dict[str, Order],
-        进度回调: Optional[Callable[[int, int, str], None]] = None,
-    ) -> 拼图结果:
-        已拼图: List[Order] = []
-        待人工: List[Order] = []
-        订单列表 = list(订单表.values())
-        总数 = len(订单列表)
-
-        for i, order in enumerate(订单列表, 1):
-            齐全, 原因 = self.校验器.校验(order)
-            if not 齐全:
-                order.状态 = OrderStatus.标黄人工
-                order.异常原因 = 原因
-                待人工.append(order)
-            else:
-                self.拼图器.生成二合一(order)
-                self.拼图器.生成三合一(order)
-                order.状态 = OrderStatus.已拼图
-                已拼图.append(order)
-            if 进度回调:
-                进度回调(i, 总数, order.车牌)
-
-        return 拼图结果(已拼图=已拼图, 待人工=待人工)
+            if os.path.isfile(full) and os.path.splitext(filename.lower())[1] in self.支持的扩展名:
+                图片.append(full)
+        return sorted(图片)
