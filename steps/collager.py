@@ -2,13 +2,13 @@
 
 Collager 只持配置，实际图像拼接为模块级纯函数。
 二合一 = 验车 | 回单（左右，按高对齐）
-三合一 = 轨迹（上，横跨满宽）+ 提货车头 | 送达车头（下，左右）
+三合一 = 顶部信息条（销售订单号+车牌号，白底黑字）+ 轨迹（横跨满宽）+ 提货车头 | 送达车头（下，左右）
 等比缩放对齐、白底。
 """
 
 import os
 from typing import List, Optional
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from core.models import Order, PhotoLabel
 from core import naming
 import config
@@ -20,6 +20,7 @@ class Collager:
     def __init__(self):
         self.背景色 = config.COLLAGE_BACKGROUND_COLOR
         self.质量 = config.COLLAGE_QUALITY
+        self.字体 = _加载字体(config.LABEL_BANNER_FONT_SIZE)
 
     def 生成二合一(self, order: Order) -> Optional[str]:
         """二合一 = 验车 | 回单，输出 {车牌}_二合一.jpg 到订单文件夹"""
@@ -34,7 +35,7 @@ class Collager:
         return out
 
     def 生成三合一(self, order: Order) -> Optional[str]:
-        """三合一 = 轨迹（上） + 提货车头 | 送达车头（下），输出 {车牌}_三合一.jpg"""
+        """三合一 = 顶部信息条 + 轨迹（上） + 提货车头 | 送达车头（下），输出 {车牌}_三合一.jpg"""
         轨迹 = order.取(PhotoLabel.轨迹)
         提货 = order.取(PhotoLabel.提货车头)
         送达 = order.取(PhotoLabel.送达车头)
@@ -42,7 +43,10 @@ class Collager:
             return None
         下排 = _横向拼接([_打开(提货[0].path), _打开(送达[0].path)], self.背景色)
         上图 = _按宽缩放(_打开(轨迹[0].path), 下排.width)
-        画布 = _纵向拼接([上图, 下排], self.背景色)
+        # 顶部信息条：销售订单号 + 车牌号（白底黑字）
+        文本 = f"销售订单号：{order.销售订单号 or '无'}    车牌号：{order.车牌}"
+        信息条 = _文字条(文本, 下排.width, self.字体, config.LABEL_BANNER_FG, config.LABEL_BANNER_BG)
+        画布 = _纵向拼接([信息条, 上图, 下排], self.背景色)
         out = os.path.join(order.文件夹路径, naming.拼图名(order.车牌, "三合一"))
         _保存(画布, out, self.质量)
         order.三合一路径 = out
@@ -50,6 +54,33 @@ class Collager:
 
 
 # ---- 图像处理纯函数 ----
+
+def _加载字体(字号: int):
+    """按候选列表找第一个可用的中文字体，找不到退回默认字体"""
+    for p in config.LABEL_FONT_CANDIDATES:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, 字号)
+            except Exception:
+                continue
+    print("[拼图器] 警告：未找到可用中文字体，信息条可能显示为方框。请在 config.LABEL_FONT_CANDIDATES 补充字体路径。")
+    return ImageFont.load_default()
+
+
+def _文字条(文本: str, 宽度: int, 字体, 前景色=(0, 0, 0), 背景色=(255, 255, 255)) -> Image.Image:
+    """生成一条白底黑字、文字水平居中的信息条，宽度与拼图对齐"""
+    padding = config.LABEL_BANNER_PADDING
+    量尺 = ImageDraw.Draw(Image.new("RGB", (宽度, 10), 背景色))
+    bbox = 量尺.textbbox((0, 0), 文本, font=字体)
+    文本宽, 文本高 = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    条高 = 文本高 + padding * 2
+    条 = Image.new("RGB", (宽度, 条高), 背景色)
+    d = ImageDraw.Draw(条)
+    x = (宽度 - 文本宽) // 2 - bbox[0]
+    y = padding - bbox[1]
+    d.text((x, y), 文本, fill=前景色, font=字体)
+    return 条
+
 
 def _打开(path: str) -> Image.Image:
     img = Image.open(path)

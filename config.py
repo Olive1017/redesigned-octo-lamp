@@ -26,6 +26,19 @@ MAX_ROUNDS_PER_IMAGE = 3   # 识别失败的图片最多重试的轮次，超过
 COLLAGE_BACKGROUND_COLOR = (255, 255, 255)  # 白色背景
 COLLAGE_QUALITY = 95
 
+# 三合一顶部信息条（销售订单号 + 车牌号，白底黑字）
+LABEL_BANNER_FONT_SIZE = 48                  # 字号
+LABEL_BANNER_PADDING = 24                    # 文字上下留白(px)
+LABEL_BANNER_BG = (255, 255, 255)            # 白底
+LABEL_BANNER_FG = (0, 0, 0)                  # 黑字
+# 中文字体候选：按顺序找第一个存在的；都没有则退回默认字体(可能不支持中文)
+LABEL_FONT_CANDIDATES = [
+    "C:/Windows/Fonts/simhei.ttf",          # 黑体 (Windows)
+    "C:/Windows/Fonts/msyh.ttc",            # 微软雅黑 (Windows)
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux
+    "/System/Library/Fonts/PingFang.ttc",   # macOS
+]
+
 # 输入路径
 DEFAULT_INPUT_DIR = ""
 
