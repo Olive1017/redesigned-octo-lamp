@@ -20,7 +20,7 @@ OCR_IF_NEED_OCR = "true"
 # 分批识别配置
 # 公司大模型一次只能识别几张，太多会识别失败，所以每个子文件夹内分批识别
 BATCH_SIZE = 5              # 每批识别的图片数
-MAX_ROUNDS_PER_IMAGE = 3   # 识别失败的图片最多重试的轮次，超过则该文件夹标黄人工
+MAX_ROUNDS_PER_IMAGE = 5  # 识别失败的图片最多重试的轮次，超过则该文件夹标黄人工
 
 # 拼图参数
 COLLAGE_BACKGROUND_COLOR = (255, 255, 255)  # 白色背景

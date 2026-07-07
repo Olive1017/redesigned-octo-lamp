@@ -27,7 +27,8 @@ class OrderStatus(str, Enum):
 
 # 每类照片必需标识
 REQUIRED_LABELS = [PhotoLabel.回单, PhotoLabel.验车, PhotoLabel.轨迹, PhotoLabel.提货车头, PhotoLabel.送达车头]
-
+# 可靠标识——OCR 对这三类识别准确；提货/送达车头常被搞混，故不单独校验
+可靠标识 = [PhotoLabel.回单, PhotoLabel.验车, PhotoLabel.轨迹]
 
 @dataclass
 class Photo:
@@ -58,10 +59,16 @@ class Order:
         """按标识取照片列表"""
         return [p for p in self.photos if p.label == label]
 
+    def 车头对(self) -> List[Photo]:
+        """车头对 = 除回单/验车/轨迹外剩下的照片。
+        OCR 常把提货/送达搞混、甚至都标成送达，故不信任车头标识，只认「剩下的两张」。"""
+        return [p for p in self.photos if p.label not in 可靠标识]
+
     def 是否齐全(self) -> bool:
-        """校验五类照片是否齐全（各类恰好 1 张）"""
-        label_counts = Counter(p.label for p in self.photos if p.label is not None)
-        return all(label_counts.get(label, 0) == 1 for label in REQUIRED_LABELS)
+        """回单/验车/轨迹 各恰好 1 张，且剩下恰好 2 张（即车头对）"""
+        counts = Counter(p.label for p in self.photos if p.label is not None)
+        三类齐全 = all(counts.get(l, 0) == 1 for l in 可靠标识)
+        return 三类齐全 and len(self.车头对()) == 2
 
     @property
     def 交货单号(self) -> Optional[str]:

@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 from core.models import Order, PhotoLabel
 from core import naming
 import config
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 class Collager:
@@ -37,12 +38,12 @@ class Collager:
     def 生成三合一(self, order: Order) -> Optional[str]:
         """三合一 = 顶部信息条 + 轨迹（上） + 提货车头 | 送达车头（下），输出 {车牌}_三合一.jpg"""
         轨迹 = order.取(PhotoLabel.轨迹)
-        提货 = order.取(PhotoLabel.提货车头)
-        送达 = order.取(PhotoLabel.送达车头)
-        if not 轨迹 or not 提货 or not 送达 or not order.文件夹路径:
+        车头 = order.车头对()  # 剩下两张，不分提货/送达、左右无所谓
+        if not 轨迹 or len(车头) != 2 or not order.文件夹路径:
             return None
-        下排 = _横向拼接([_打开(提货[0].path), _打开(送达[0].path)], self.背景色)
+        下排 = _横向拼接([_打开(车头[0].path), _打开(车头[1].path)], self.背景色)
         上图 = _按宽缩放(_打开(轨迹[0].path), 下排.width)
+        # 下面信息条 + 纵向拼接保持不变
         # 顶部信息条：销售订单号 + 车牌号（白底黑字）
         文本 = f"销售订单号：{order.销售订单号 or '无'}    车牌号：{order.车牌}"
         信息条 = _文字条(文本, 下排.width, self.字体, config.LABEL_BANNER_FG, config.LABEL_BANNER_BG)
@@ -84,6 +85,7 @@ def _文字条(文本: str, 宽度: int, 字体, 前景色=(0, 0, 0), 背景色=
 
 def _打开(path: str) -> Image.Image:
     img = Image.open(path)
+    img = ImageOps.exif_transpose(img)
     return img.convert("RGB")
 
 
