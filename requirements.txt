@@ -4,3 +4,4 @@ requests==2.31.0
 playwright==1.44.0
 ddddocr
 numpy<2.0.0
+python-dotenv

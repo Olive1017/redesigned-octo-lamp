@@ -46,3 +46,4 @@ Thumbs.db
 # 登录凭据（敏感文件）
 auth_state.json
 上传报告_*.csv
+.env

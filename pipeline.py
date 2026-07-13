@@ -55,30 +55,15 @@ class 流水线:
 
             # 幂等：跳过已处理的文件夹
             if self.输出器.是否已处理(子路径):
-                # 为已跳过的订单创建 Order 对象
+                # 已处理过：不重复识别。只从文件夹名 {车牌}_{交货单号} 还原交货单号，
+                # 供 UI 计数与上传门槛判断（上传器会自行重扫物理文件夹）。
                 order = Order(车牌=车牌, 文件夹路径=子路径, 状态=OrderStatus.已拼图)
-                # 尝试从文件夹名解析交货单号（格式：{车牌}_{交货单号}）
                 if "_" in 车牌:
                     原车牌, 交货单号 = 车牌.rsplit("_", 1)
                     order.车牌 = 原车牌
-                    # 从现有文件中读取照片信息（如果存在）
-                    for 文件名 in os.listdir(子路径):
-                        文件路径 = os.path.join(子路径, 文件名)
-                        if os.path.isfile(文件路径) and 文件名.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
-                            # 解析文件名中的标识：{车牌}_{类别}
-                            parts = os.path.splitext(文件名)[0].split('_')
-                            if len(parts) >= 2:
-                                类别 = parts[-1]
-                                try:
-                                    label = PhotoLabel(类别)
-                                    photo = Photo(path=文件路径, label=label, plate=原车牌)
-                                    if label == PhotoLabel.回单:
-                                        # 如果有回单，尝试从文件名或元数据读取交货单号/销售订单号
-                                        # 这里可以添加读取逻辑
-                                        pass
-                                    order.加照片(photo)
-                                except ValueError:
-                                    pass  # 不是有效标识，忽略
+                    # 挂一张最小「回单」占位照片，让 order.交货单号 属性取得到值
+                    order.加照片(Photo(path=子路径, label=PhotoLabel.回单,
+                                       plate=原车牌, 交货单号=交货单号))
                 结果.已跳过.append(order)
                 continue
 

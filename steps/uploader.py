@@ -38,6 +38,11 @@ from playwright.sync_api import (
     TimeoutError as PWTimeout,
 )
 
+from dotenv import load_dotenv
+load_dotenv()                          # ← 必须在下面两行之前
+LMS_ACCOUNT = os.environ.get("LMS_ACCOUNT", "")
+LMS_PASSWORD = os.environ.get("LMS_PASSWORD", "")
+
 # ==================== 配置区（建议以后移到 config.py） ====================
 LOGIN_URL = "https://lms.chem.petrochina.com.cn/#/login"
 
@@ -169,13 +174,18 @@ def 准备页面(pw: Playwright,等待人工=None):
     return browser, context, page
 
 
-def 登录(page: Page, context: BrowserContext):
+def 登录(page: Page, context: BrowserContext, 等待人工=None):
     if LMS_ACCOUNT:
         page.get_by_role("textbox", name="账号").fill(LMS_ACCOUNT)
     if LMS_PASSWORD:
         page.get_by_role("textbox", name="密码").fill(LMS_PASSWORD)
-    print("\n⚠️  请在浏览器里输入验证码并点登录，完成后回到这里按回车继续…")
-    input()
+    # 先自动识别验证码，最多重试 3 次；失败才回退人工
+    if not 尝试验证码登录(page, 次数=3):
+        if 等待人工 is not None:          # GUI：弹框等用户在浏览器里手动完成
+            等待人工()
+        else:                            # 命令行：老方式
+            print("\n⚠️ 验证码自动识别失败，请在浏览器里手动完成登录后按回车…")
+            input()
     context.storage_state(path=STORAGE_STATE)
     log.info("登录态已缓存到 %s", STORAGE_STATE)
 
