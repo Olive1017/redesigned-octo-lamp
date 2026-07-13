@@ -6,7 +6,9 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QProgressBar, QListWidget,
     QFileDialog, QMessageBox
 )
-from gui.worker import Worker
+
+from core.models import Order
+from gui.worker import Worker, 上传Worker
 
 
 class MainWindow(QMainWindow):
@@ -19,7 +21,8 @@ class MainWindow(QMainWindow):
 
         self.父文件夹路径 = ""
         self.worker = None
-        self.已完成订单 = []
+        self.上传worker = None
+        self.可上传订单 = []
 
         self._初始化界面()
 
@@ -64,18 +67,12 @@ class MainWindow(QMainWindow):
         manual.addWidget(self.待人工列表)
         result.addLayout(manual)
 
-        skip = QVBoxLayout()
-        skip.addWidget(QLabel("已跳过（已处理过）"))
-        self.已跳过列表 = QListWidget()
-        skip.addWidget(self.已跳过列表)
-        result.addLayout(skip)
-
         layout.addLayout(result)
 
-        # 底部 RPA 预留
+        # 底部 RPA 上传
         bottom = QHBoxLayout()
-        self.上传按钮 = QPushButton("启动 RPA 上传（预留）")
-        self.上传按钮.clicked.connect(self._启动上传占位)
+        self.上传按钮 = QPushButton("启动 RPA 上传")
+        self.上传按钮.clicked.connect(self._启动上传)
         self.上传按钮.setEnabled(False)
         bottom.addStretch()
         bottom.addWidget(self.上传按钮)
@@ -92,8 +89,7 @@ class MainWindow(QMainWindow):
     def _清空列表(self):
         self.已完成列表.clear()
         self.待人工列表.clear()
-        self.已跳过列表.clear()
-        self.已完成订单 = []
+        self.可上传订单 = []
 
     def _开始处理(self):
         if not self.父文件夹路径:
@@ -121,32 +117,86 @@ class MainWindow(QMainWindow):
         self.开始处理按钮.setEnabled(True)
 
         for order in 结果.已完成:
-            self.已完成列表.addItem(
-                f"{order.车牌} - {order.交货单号 or ''}（{os.path.basename(order.文件夹路径 or '')}）"
-            )
-            self.已完成订单.append(order)
+            self._添加订单到列表(order, self.已完成列表)
+            self.可上传订单.append(order)
+
+        # 处理已跳过订单中有交货单号的
+        for order in 结果.已跳过:
+            if order.交货单号:
+                self.可上传订单.append(order)
 
         for order in 结果.待人工:
-            self.待人工列表.addItem(f"{order.车牌}: {order.异常原因 or ''}")
+            self._添加订单到列表(order, self.待人工列表)
 
-        for 名 in 结果.已跳过:
-            self.已跳过列表.addItem(名)
-
-        if self.已完成订单:
+        if self.可上传订单:
             self.上传按钮.setEnabled(True)
 
         QMessageBox.information(
             self, "完成",
-            f"处理完成！\n已完成: {len(结果.已完成)} 单\n待人工: {len(结果.待人工)} 单\n已跳过: {len(结果.已跳过)} 个"
+            f"处理完成！\n可上传: {len(self.可上传订单)} 单\n待人工: {len(结果.待人工)} 单\n已跳过: {len(结果.已跳过)} 个"
         )
+
+    def _添加订单到列表(self, order: Order, 列表控件: QListWidget):
+        """将订单的详细识别信息添加到列表中"""
+        识别信息 = []
+
+        # 基本信息
+        文本 = f"【{order.车牌}】"
+        if order.交货单号:
+            文本 += f" 交货单:{order.交货单号}"
+        if order.销售订单号:
+            文本 += f" 销售单:{order.销售订单号}"
+        识别信息.append(文本)
+
+        # 照片识别结果
+        成功识别 = [p for p in order.photos if p.label is not None]
+        失败识别 = [p for p in order.photos if p.label is None]
+
+        if 成功识别:
+            识别摘要 = {}
+            for p in 成功识别:
+                标识 = p.label.value if p.label else "未知"
+                识别摘要[标识] = 识别摘要.get(标识, 0) + 1
+            识别信息.append(f"  ✅ 识别: {', '.join(f'{k}×{v}' for k, v in 识别摘要.items())}")
+
+        if 失败识别:
+            失败文件名 = [os.path.basename(p.path) for p in 失败识别]
+            识别信息.append(f"  ❌ 失败: {', '.join(失败文件名[:3])}" +
+                             ("..." if len(失败文件名) > 3 else ""))
+
+        # 异常原因
+        if order.异常原因:
+            识别信息.append(f"  ⚠️ {order.异常原因}")
+
+        列表控件.addItem("\n".join(识别信息))
 
     def _处理错误(self, 错误信息: str):
         self.当前文件标签.setText("处理出错")
         self.开始处理按钮.setEnabled(True)
         QMessageBox.critical(self, "错误", 错误信息)
 
-    def _启动上传占位(self):
-        QMessageBox.information(
-            self, "提示",
-            "RPA 上传功能预留中\n将来将调用上传器把已完成订单交给 RPA"
-        )
+    def _启动上传(self):
+        if not self.父文件夹路径:
+            QMessageBox.warning(self, "提示", "请先选择父文件夹并完成处理")
+            return
+        self.上传按钮.setEnabled(False)
+        self.上传worker = 上传Worker(self.父文件夹路径)
+        self.上传worker.需要人工登录.connect(self._提示人工登录)
+        self.上传worker.完成信号.connect(self._上传完成)
+        self.上传worker.错误信号.connect(self._上传错误)
+        self.上传worker.start()
+
+    def _提示人工登录(self):
+        QMessageBox.information(self, "需要登录",
+                                "验证码自动识别失败，请在弹出的浏览器里手动完成登录/验证码，然后点“确定”继续")
+        self.上传worker.继续登录()
+
+    def _上传完成(self, msg: str):
+        self.上传按钮.setEnabled(True)
+        QMessageBox.information(self, "完成", msg)
+
+    def _上传错误(self, msg: str):
+        self.上传按钮.setEnabled(True)
+        QMessageBox.critical(self, "上传出错", msg)
+
+

@@ -70,6 +70,35 @@ logging.basicConfig(
 log = logging.getLogger("uploader")
 
 
+# ==================== 验证码识别 ====================
+def 识别验证码(图片字节: bytes) -> str:
+    """使用 ddddocr 识别验证码（懒加载单例）"""
+    global _ocr
+    try:
+        _ocr
+    except NameError:
+        import ddddocr
+        _ocr = ddddocr.DdddOcr(show_ad=False)
+    return _ocr.classification(图片字节).strip()
+
+
+def 尝试验证码登录(page: Page, 次数: int = 3) -> bool:
+    """尝试自动识别验证码登录，返回是否成功"""
+    for _ in range(次数):
+        try:
+            图 = page.locator("img.captcha").screenshot()  # [核对] 验证码图片元素
+            page.get_by_role("textbox", name="验证码").fill(识别验证码(图))  # [核对]
+            page.get_by_role("button", name="登录").click()  # [核对]
+            page.wait_for_timeout(1500)
+            if "login" not in page.url.lower():
+                return True
+            page.locator("img.captcha").click()  # [核对] 点图刷新验证码
+            page.wait_for_timeout(500)
+        except Exception:
+            page.wait_for_timeout(500)
+    return False
+
+
 # ==================== 数据结构 ====================
 @dataclass
 class Delivery:
@@ -126,7 +155,7 @@ def 确保小于3MB(路径: Path) -> Path:
 
 
 # ==================== 登录（会话复用） ====================
-def 准备页面(pw: Playwright):
+def 准备页面(pw: Playwright,等待人工=None):
     browser = pw.chromium.launch(channel="msedge", headless=False)
     if Path(STORAGE_STATE).exists():
         context = browser.new_context(storage_state=STORAGE_STATE)
@@ -136,11 +165,11 @@ def 准备页面(pw: Playwright):
     page.goto(LOGIN_URL)
     page.wait_for_timeout(2000)
     if "login" in page.url.lower() or page.get_by_role("textbox", name="账号").count():
-        人工登录(page, context)
+        登录(page, context, 等待人工)
     return browser, context, page
 
 
-def 人工登录(page: Page, context: BrowserContext):
+def 登录(page: Page, context: BrowserContext):
     if LMS_ACCOUNT:
         page.get_by_role("textbox", name="账号").fill(LMS_ACCOUNT)
     if LMS_PASSWORD:
@@ -243,7 +272,7 @@ def 标黄(结果表, 交货单号, 原因):
 
 
 # ==================== 主流程 ====================
-def main(输入目录: str):
+def main(输入目录: str, 等待人工=None):
     目录 = Path(输入目录)
     结果表: list[结果] = []
     deliveries = 扫描文件夹(目录)
@@ -252,7 +281,7 @@ def main(输入目录: str):
         return
 
     with sync_playwright() as pw:
-        browser, context, page = 准备页面(pw)
+        browser, context, page = 准备页面(pw, 等待人工)
         try:
             进入费用录入(page)          # 导航一次，后续只换查询条件
             for d in deliveries:
