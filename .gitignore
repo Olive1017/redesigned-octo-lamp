@@ -42,3 +42,7 @@ Thumbs.db
 
 # 测试响应文件（可选，如果不提交可取消注释）
 # ocr_response.json
+
+# 登录凭据（敏感文件）
+auth_state.json
+上传报告_*.csv

@@ -2,7 +2,7 @@
 
 from typing import Tuple
 from collections import Counter
-from core.models import Order, REQUIRED_LABELS, 可靠标识
+from core.models import Order, 可靠标识
 
 
 class Validator:
