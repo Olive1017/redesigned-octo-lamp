@@ -24,9 +24,6 @@ class OrderStatus(str, Enum):
     已上传 = "已上传"
     标黄人工 = "标黄人工"
 
-
-# 每类照片必需标识
-REQUIRED_LABELS = [PhotoLabel.回单, PhotoLabel.验车, PhotoLabel.轨迹, PhotoLabel.提货车头, PhotoLabel.送达车头]
 # 可靠标识——OCR 对这三类识别准确；提货/送达车头常被搞混，故不单独校验
 可靠标识 = [PhotoLabel.回单, PhotoLabel.验车, PhotoLabel.轨迹]
 

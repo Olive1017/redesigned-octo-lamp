@@ -8,7 +8,6 @@ Collager 只持配置，实际图像拼接为模块级纯函数。
 
 import os
 from typing import List, Optional
-from PIL import Image, ImageDraw, ImageFont
 from core.models import Order, PhotoLabel
 from core import naming
 import config
