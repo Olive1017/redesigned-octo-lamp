@@ -88,18 +88,22 @@ def 识别验证码(图片字节: bytes) -> str:
 
 
 def 尝试验证码登录(page: Page, 次数: int = 3) -> bool:
-    """尝试自动识别验证码登录，返回是否成功"""
-    for _ in range(次数):
+    验证码图 = 'img[src^="/api/captcha"]'
+    for n in range(次数):
         try:
-            图 = page.locator("img.captcha").screenshot()  # [核对] 验证码图片元素
-            page.get_by_role("textbox", name="验证码").fill(识别验证码(图))  # [核对]
-            page.get_by_role("button", name="登录").click()  # [核对]
+            # 截图同时存成文件，肉眼确认到底喂给 OCR 的是不是那张验证码
+            图 = page.locator(验证码图).first.screenshot(path=f"captcha_{n}.png")
+            码 = 识别验证码(图)
+            print(f"[验证码] 第{n+1}次 识别 = {码!r}  (长度 {len(码)})")   # ← 打印出来看
+            page.get_by_placeholder("验证码").fill(码)
+            page.get_by_role("button", name="登录").click()   # [核对]
             page.wait_for_timeout(1500)
             if "login" not in page.url.lower():
                 return True
-            page.locator("img.captcha").click()  # [核对] 点图刷新验证码
-            page.wait_for_timeout(500)
-        except Exception:
+            page.reload()                                     # 用 reload 换新验证码（点图不管用）
+            page.wait_for_timeout(800)
+        except Exception as e:
+            print(f"[验证码] 第{n+1}次 异常: {e}")
             page.wait_for_timeout(500)
     return False
 
@@ -193,22 +197,26 @@ def 登录(page: Page, context: BrowserContext, 等待人工=None):
 # ==================== 导航（只需一次） ====================
 def 进入费用录入(page: Page):
     page.get_by_text("新调运管理").click()
-    page.get_by_text("公路进出厂协同").click()          # [核对]
+    page.get_by_text("公路进出厂协同").click()
     page.get_by_text("公路费用管理").click()
     page.get_by_text("公路费用录入").click()
     page.get_by_role("tab", name="销售交货单").click()        # [核对]
     page.wait_for_load_state("networkidle")
 
 
-# ==================== 按交货单号查询 ====================
+# ==================== 按交货单号查询 ====================)
 def 查询交货单号(page: Page, 交货单号: str):
-    box = page.get_by_role("textbox", name="交货单号")       # [核对] 页面有交货单号搜索框
+    # label 文字是「交货单号:」带冒号。用 ^交货单号 开头匹配：
+    # 既命中带冒号的，又能排除「ERP交货单号」（它不是以"交货单号"开头）
+    表单项 = page.locator(".el-form-item").filter(
+        has=page.locator(".el-form-item__label", has_text=re.compile(r"^交货单号"))
+    )
+    box = 表单项.get_by_role("textbox")
     box.click()
     box.fill("")
     box.fill(交货单号)
     page.get_by_role("button", name=re.compile("查询")).click()
     page.wait_for_load_state("networkidle")
-    # 若结果行需展开才能看到子行                        # [核对]
     expand = page.locator(".el-table__expand-icon").first
     if expand.count():
         expand.click()
