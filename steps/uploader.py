@@ -87,21 +87,39 @@ def 识别验证码(图片字节: bytes) -> str:
     return _ocr.classification(图片字节).strip()
 
 
-def 尝试验证码登录(page: Page, 次数: int = 3) -> bool:
+def 刷新验证码(page: Page, 验证码图: str) -> bool:
+    """点击验证码图片刷新，确认 src(uuid) 变化"""
+    旧 = page.locator(验证码图).first.get_attribute("src")
+    page.locator(验证码图).first.click()
+    for _ in range(20):                       # 最多等 2 秒
+        page.wait_for_timeout(100)
+        if page.locator(验证码图).first.get_attribute("src") != 旧:
+            return True
+    return False
+
+
+def 尝试验证码登录(page: Page, 次数: int = 5) -> bool:
     验证码图 = 'img[src^="/api/captcha"]'
+    # 账号密码只填一次——不 reload，字段不会被清空
+    page.get_by_placeholder("账号").fill(LMS_ACCOUNT)     # ← 换成你已生效的账号定位
+    page.get_by_placeholder("密码").fill(LMS_PASSWORD)    # ← 换成你已生效的密码定位
     for n in range(次数):
         try:
-            # 截图同时存成文件，肉眼确认到底喂给 OCR 的是不是那张验证码
             图 = page.locator(验证码图).first.screenshot(path=f"captcha_{n}.png")
             码 = 识别验证码(图)
-            print(f"[验证码] 第{n+1}次 识别 = {码!r}  (长度 {len(码)})")   # ← 打印出来看
-            page.get_by_placeholder("验证码").fill(码)
-            page.get_by_role("button", name="登录").click()   # [核对]
+            print(f"[验证码] 第{n+1}次 识别 = {码!r}")
+            框 = page.get_by_placeholder("验证码")
+            框.fill("")            # 清掉上一次的
+            框.fill(码)
+            page.get_by_role("button", name="登录").click()
             page.wait_for_timeout(1500)
             if "login" not in page.url.lower():
+                print(f"[验证码] 第{n+1}次 登录成功")
                 return True
-            page.reload()                                     # 用 reload 换新验证码（点图不管用）
-            page.wait_for_timeout(800)
+            # 失败 → 点图换新验证码（不 reload，账号密码保留）
+            print(f"[验证码] 第{n+1}次 失败，点图刷新")
+            if not 刷新验证码(page, 验证码图):
+                print("  ⚠️ 点图似乎没换新验证码，可能得找专门的刷新按钮")
         except Exception as e:
             print(f"[验证码] 第{n+1}次 异常: {e}")
             page.wait_for_timeout(500)
@@ -178,20 +196,20 @@ def 准备页面(pw: Playwright,等待人工=None):
     return browser, context, page
 
 
-def 登录(page: Page, context: BrowserContext, 等待人工=None):
-    if LMS_ACCOUNT:
-        page.get_by_role("textbox", name="账号").fill(LMS_ACCOUNT)
-    if LMS_PASSWORD:
-        page.get_by_role("textbox", name="密码").fill(LMS_PASSWORD)
-    # 先自动识别验证码，最多重试 3 次；失败才回退人工
-    if not 尝试验证码登录(page, 次数=3):
-        if 等待人工 is not None:          # GUI：弹框等用户在浏览器里手动完成
-            等待人工()
-        else:                            # 命令行：老方式
-            print("\n⚠️ 验证码自动识别失败，请在浏览器里手动完成登录后按回车…")
-            input()
+def 登录(page: Page, context, 等待人工=None):
+    page.goto(LOGIN_URL)
+    page.wait_for_load_state("networkidle")
+    if 尝试验证码登录(page):
+        context.storage_state(path=STORAGE_STATE)   # 保持你原来的会话保存写法
+        return
+    # OCR 多次失败 → 转人工：先填好账号密码，人只需输验证码
+    page.get_by_placeholder("账号").fill(LMS_ACCOUNT)     # 同上，用你能用的定位
+    page.get_by_placeholder("密码").fill(LMS_PASSWORD)
+    if 等待人工:
+        等待人工()          # GUI：弹窗提示人工输验证码后点继续
+    else:
+        input("请在浏览器手动输入验证码并登录，然后回车继续...")
     context.storage_state(path=STORAGE_STATE)
-    log.info("登录态已缓存到 %s", STORAGE_STATE)
 
 
 # ==================== 导航（只需一次） ====================
@@ -217,10 +235,13 @@ def 查询交货单号(page: Page, 交货单号: str):
     box.fill(交货单号)
     page.get_by_role("button", name=re.compile("查询")).click()
     page.wait_for_load_state("networkidle")
-    expand = page.locator(".el-table__expand-icon").first
-    if expand.count():
-        expand.click()
-        page.wait_for_timeout(500)
+    icons = page.locator(".el-table__expand-icon:visible")
+    for i in range(icons.count()):
+        icon = icons.nth(i)
+        if "expanded" not in (icon.get_attribute("class") or ""):
+            icon.click()
+            page.wait_for_timeout(400)
+            break      
 
 
 def 找行(page: Page, 交货单号: str):
