@@ -12,9 +12,6 @@ steps/uploader.py
     🔴 标黄   -> 拼图缺失 / 页面查无该交货单号 / 压不到3MB / 上传报错
 - 验证码：人工登录一次，storage_state 缓存会话，之后复用。
 - 3MB 限制：上传前等比压缩。
-
-⚠️ 带 [核对] 的选择器基于录制脚本+截图推测，正式用前请用
-   `playwright codegen` 对真实页面校准。
 """
 from __future__ import annotations
 
@@ -218,50 +215,83 @@ def 进入费用录入(page: Page):
     page.get_by_text("公路进出厂协同").click()
     page.get_by_text("公路费用管理").click()
     page.get_by_text("公路费用录入").click()
-    page.get_by_role("tab", name="销售交货单").click()        # [核对]
+    page.get_by_role("tab", name="销售交货单").click()
     page.wait_for_load_state("networkidle")
 
 
 # ==================== 按交货单号查询 ====================)
-def 查询交货单号(page: Page, 交货单号: str):
-    # label 文字是「交货单号:」带冒号。用 ^交货单号 开头匹配：
-    # 既命中带冒号的，又能排除「ERP交货单号」（它不是以"交货单号"开头）
+def 查询交货单号(page: Page, 交货单号: str) -> bool:
     表单项 = page.locator(".el-form-item").filter(
         has=page.locator(".el-form-item__label", has_text=re.compile(r"^交货单号"))
     )
     box = 表单项.get_by_role("textbox")
-    box.click()
-    box.fill("")
-    box.fill(交货单号)
+    box.click(); box.fill(""); box.fill(交货单号)
     page.get_by_role("button", name=re.compile("查询")).click()
-    page.wait_for_load_state("networkidle")
-    icons = page.locator(".el-table__expand-icon:visible")
-    for i in range(icons.count()):
-        icon = icons.nth(i)
-        if "expanded" not in (icon.get_attribute("class") or ""):
-            icon.click()
-            page.wait_for_timeout(400)
-            break      
 
+    mask = page.locator(".el-loading-mask")
+    try: mask.first.wait_for(state="visible", timeout=2000)
+    except PWTimeout: pass
+    try: mask.first.wait_for(state="hidden", timeout=15000)
+    except PWTimeout: pass
+    page.wait_for_timeout(300)
+
+    # 母行没出来 = 查无此单，6 秒内快速返回，别卡
+    箭头 = page.locator(".el-table__expand-icon:visible").first
+    try:
+        箭头.wait_for(state="visible", timeout=6000)
+    except PWTimeout:
+        return False
+
+    # 已展开就别再点（二次点击会收起来）
+    if "expanded" not in (箭头.get_attribute("class") or ""):
+        箭头.scroll_into_view_if_needed()
+        箭头.click()
+
+    # 确认子表真渲染出来（“交货单号”表头出现）
+    try:
+        page.locator("th").filter(
+            has_text=re.compile(r"^\s*交货单号\s*$")
+        ).first.wait_for(state="visible", timeout=8000)
+        return True
+    except PWTimeout:
+        return False
+    
 
 def 找行(page: Page, 交货单号: str):
-    row = page.locator("tr", has=page.get_by_text(交货单号, exact=True))  # [核对]
-    return row.first if row.count() else None
+    表头 = page.locator("th").filter(has_text=re.compile(r"^\s*交货单号\s*$")).first
+    try:
+        表头.wait_for(state="attached", timeout=3000)   # 没展开就 3 秒放弃，不再卡 30 秒
+    except PWTimeout:
+        return None
+    m = re.search(r"(el-table_\d+_column_\d+)", 表头.get_attribute("class") or "")
+    if not m:
+        return None
+    列类 = m.group(1)
+    格 = page.locator(f"td.{列类}:visible").filter(
+        has_text=re.compile(rf"^\s*{re.escape(交货单号)}\s*$")
+    )
+    try:
+        格.first.wait_for(state="visible", timeout=8000)
+    except PWTimeout:
+        return None
+    return 格.first.locator("xpath=ancestor::tr[1]")
 
 
 def 行已录入(row) -> bool:
+    # 列序（0基）：0序号 1交货单号 2erp 3车船号 4过账日期 5过账量 6总金额 7状态 8操作
     try:
-        return row.get_by_text("已录入").count() > 0                    # [核对] 状态文字
+        状态 = row.locator("td").nth(7).inner_text().strip()
+        return ("已录入" in 状态) or ("已提交" in 状态)
     except Exception:
         return False
 
 
 # ==================== 录入 + 上传一行 ====================
 def 录入一行(page: Page, row, d: Delivery):
-    row.get_by_role("button", name="录入").click()                    # [核对]
+    row.get_by_role("button", name="录入", exact=True).click()      
     page.wait_for_timeout(800)
 
-    amount = page.locator(".cell .el-input__inner").first             # [核对]
+    amount = page.locator(".cell .el-input__inner").first            
     if amount.count() and not amount.input_value().strip():
         amount.fill(含税金额)
 
@@ -273,12 +303,18 @@ def 录入一行(page: Page, row, d: Delivery):
 
 
 def 上传位(page: Page, 位名: str, 文件: Path):
-    slot_row = page.locator("tr", has=page.get_by_text(位名, exact=True)).first  # [核对]
-    with page.expect_file_chooser() as fc:
-        slot_row.get_by_text("上传").click()
-    fc.value.set_files(str(文件))
-    page.wait_for_timeout(1000)
+    行 = page.locator("tr").filter(
+        has=page.locator("td .cell", has_text=re.compile(rf"^\s*{re.escape(位名)}\s*$"))
+    ).first
+    行.locator("input.el-upload__input").set_input_files(str(文件))
 
+    # 关键：等这一行“上传时间”列出现时间戳，才算传完，再返回
+    上传时间格 = 行.locator("td").nth(2)   # 0序号 1文件名称 2上传时间 3操作
+    for _ in range(150):                   # 最多等 15 秒
+        page.wait_for_timeout(100)
+        if (上传时间格.inner_text() or "").strip():
+            return
+    raise RuntimeError(f"{位名} 上传超时：“上传时间”一直是空的")
 
 # ==================== 处理一个交货单号 ====================
 def 处理一个(page: Page, d: Delivery, 结果表):
@@ -332,21 +368,9 @@ def main(输入目录: str, 等待人工=None):
             context.close()
             browser.close()
 
-    写报告(目录, 结果表)
+    log.info("处理完成")
 
 
-def 写报告(目录: Path, 结果表):
-    报告 = 目录 / f"上传报告_{time.strftime('%Y%m%d_%H%M%S')}.csv"
-    with open(报告, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f)
-        w.writerow(["交货单号", "命运", "原因"])
-        for r in 结果表:
-            w.writerow([r.交货单号, r.命运, r.原因])
-    成功 = sum(1 for r in 结果表 if r.命运 == "成功")
-    跳过 = sum(1 for r in 结果表 if r.命运 == "跳过")
-    标黄 = sum(1 for r in 结果表 if r.命运 == "标黄人工")
-    log.info("===== 汇总：成功 %d / 跳过 %d / 标黄 %d =====", 成功, 跳过, 标黄)
-    log.info("报告已写：%s", 报告)
 
 
 if __name__ == "__main__":
