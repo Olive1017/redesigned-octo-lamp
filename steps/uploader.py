@@ -141,6 +141,11 @@ class 结果:
 
 
 # ==================== 扫本地文件夹 ====================
+def _规整单号(s: str) -> str:
+    """去掉首尾和中间所有空白（含全角空格\u3000、制表符、换行）——交货单号是纯数字"""
+    return re.sub(r"\s+", "", s or "")
+
+
 def 扫描文件夹(输入目录: Path):
     """每个子文件夹名 = {车牌}_{交货单号}，内含二合一/三合一拼图"""
     deliveries = []
@@ -151,6 +156,7 @@ def 扫描文件夹(输入目录: Path):
             log.warning("跳过不符命名的文件夹：%s", d.name)
             continue
         车牌, 交货单号 = d.name.rsplit("_", 1)
+        交货单号 = _规整单号(交货单号)
         二 = next((p for p in d.iterdir() if MARK_二合一 in p.name), None)
         三 = next((p for p in d.iterdir() if MARK_三合一 in p.name), None)
         deliveries.append(Delivery(交货单号, 车牌, d, 二, 三))
@@ -222,6 +228,7 @@ def 进入费用录入(page: Page):
 # ==================== 按交货单号查询 ====================)
 def 查询交货单号(page: Page, 交货单号: str) -> bool:
     # 填单号 + 点查询
+    交货单号 = _规整单号(交货单号)
     表单项 = page.locator(".el-form-item").filter(
         has=page.locator(".el-form-item__label", has_text=re.compile(r"^交货单号"))
     )
