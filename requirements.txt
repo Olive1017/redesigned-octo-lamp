@@ -5,3 +5,4 @@ playwright==1.44.0
 ddddocr
 numpy<2.0.0
 python-dotenv
+openpyxl>=3.1

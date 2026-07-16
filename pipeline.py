@@ -1,34 +1,37 @@
 """流水线编排 - 一键一条龙：逐子文件夹 识别→就地改名→校验→拼图→改文件夹名
 
 人工已按车牌把图片分到各子文件夹（每个子文件夹 = 一个车牌 = 一个订单）。
-本流水线遭历父文件夹下的每个子文件夹，逐个走完整链路。
+本流水线遍历父文件夹下的每个子文件夹，逐个走完整链路。
 - 车牌以子文件夹名为准，识别返回的车牌仅作交叉校验。
 - 已处理过的文件夹（名带交货单号 / 已有拼图）自动跳过（幂等、可断点续跑）。
 """
 
 import os
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.models import Order, OrderStatus, PhotoLabel, Photo
+from core.order_table import 单号表
 from steps.recognizer import Recognizer
 from steps.writer import Writer
 from steps.validator import Validator
 from steps.collager import Collager
 import config
-import logging
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
 class 处理结果:
     """一键一条龙运行结果"""
-    已完成: List[Order] = field(default_factory=list)   # 识别+拼图+改名成功
-    待人工: List[Order] = field(default_factory=list)   # 不齐全 / 识别失败
-    已跳过: List[Order] = field(default_factory=list)      # 幂等跳过的文件夹名
+    已完成: List[Order] = field(default_factory=list)  # 识别+拼图+改名成功
+    待人工: List[Order] = field(default_factory=list)  # 不齐全 / 识别失败
+    已跳过: List[Order] = field(default_factory=list)  # 幂等跳过的文件夹名
 
 
 class 流水线:
-    """一键一条龙：遭历父文件夹下的车牌子文件夹，逐个处理"""
+    """一键一条龙：遍历父文件夹下的车牌子文件夹，逐个处理"""
 
     支持的扩展名 = {'.jpg', '.jpeg', '.png', '.bmp', '.pdf'}
 
@@ -49,6 +52,9 @@ class 流水线:
         if 总数 == 0:
             return 结果
 
+        # 先加载单号对照表（读不到会抛错，由上层 worker 展示）
+        self.单号表 = 单号表.从父文件夹(父文件夹)
+
         for i, 子路径 in enumerate(子文件夹s, 1):
             车牌 = os.path.basename(子路径)
             if 进度回调:
@@ -62,9 +68,7 @@ class 流水线:
                 if "_" in 车牌:
                     原车牌, 交货单号 = 车牌.rsplit("_", 1)
                     order.车牌 = 原车牌
-                    # 挂一张最小「回单」占位照片，让 order.交货单号 属性取得到值
-                    order.加照片(Photo(path=子路径, label=PhotoLabel.回单,
-                                       plate=原车牌, 交货单号=交货单号))
+                    order.交货单号 = 交货单号
                 结果.已跳过.append(order)
                 continue
 
@@ -84,6 +88,15 @@ class 流水线:
             order.异常原因 = "文件夹内无图片"
             return order
 
+        # 0. 单号从对照表取（以子文件夹名/车牌为键）；查不到快速失败标黄，省去 OCR
+        命中 = self.单号表.查(车牌)
+        if not 命中:
+            order.状态 = OrderStatus.标黄人工
+            order.异常原因 = f"对照表中无此车牌对应单号：{车牌}"
+            return order
+        order.交货单号 = 命中["交货单号"]
+        order.销售订单号 = 命中["订单号"]
+
         # 1. 分批识别（大模型一次只能识别几张），失败的图片按轮次重试
         轮次 = 0
         while 待识别 and 轮次 < config.MAX_ROUNDS_PER_IMAGE:
@@ -96,10 +109,8 @@ class 流水线:
                         continue
                     # 2. 车牌以文件夹名为准，识别车牌仅作校验
                     if photo.plate and photo.plate != 车牌:
-                        logging.getLogger("pipeline").warning(
-                            f"[流水线] 车牌不一致：文件夹={车牌} 识别={photo.plate}（以文件夹名为准）"
-                        )
-                    photo.plate = 车牌
+                        log.info("[流水线] 车牌不一致：文件夹=%s 识别=%s（以文件夹名为准）", 车牌, photo.plate)
+                        photo.plate = 车牌
                     order.加照片(photo)
                     # 3. 就地重命名图片 {车牌}_{类别}
                     self.输出器.重命名图片(photo)

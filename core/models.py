@@ -47,6 +47,8 @@ class Order:
     文件夹路径: Optional[str] = None
     二合一路径: Optional[str] = None
     三合一路径: Optional[str] = None
+    交货单号: Optional[str] = None
+    销售订单号: Optional[str] = None
 
     def 加照片(self, photo: Photo):
         """添加照片"""
@@ -66,19 +68,3 @@ class Order:
         counts = Counter(p.label for p in self.photos if p.label is not None)
         三类齐全 = all(counts.get(l, 0) == 1 for l in 可靠标识)
         return 三类齐全 and len(self.车头对()) == 2
-
-    @property
-    def 交货单号(self) -> Optional[str]:
-        """从「回单」照片取交货单号"""
-        回单照片s = self.取(PhotoLabel.回单)
-        if 回单照片s:
-            return 回单照片s[0].交货单号
-        return None
-
-    @property
-    def 销售订单号(self) -> Optional[str]:
-        """从「回单」照片取销售订单号（留给 RPA）"""
-        回单照片s = self.取(PhotoLabel.回单)
-        if 回单照片s:
-            return 回单照片s[0].销售订单号
-        return None
