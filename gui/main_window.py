@@ -50,7 +50,7 @@ class MainWindow(QMainWindow):
         horizontal_split = QSplitter(Qt.Horizontal)
 
         # 左：识别/拼图
-        left_box = QGroupBox("① 识别/拼图")
+        left_box = QGroupBox("第一步：识别+拼图")
         left_layout = QVBoxLayout(left_box)
         hl = QHBoxLayout()
         self.start_recog_btn = QPushButton("开始识别")
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.recog_list)
 
         # 右：上传 LMS
-        right_box = QGroupBox("② 上传 LMS")
+        right_box = QGroupBox("第二步：上传系统")
         right_layout = QVBoxLayout(right_box)
         hl2 = QHBoxLayout()
         self.start_upload_btn = QPushButton("开始上传")
@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         self.stop_recog_btn.setEnabled(False)
         try:
             for order in 结果.已完成:
-                self.recog_list.addItem(f"【{order.车牌}】 交货单:{order.交货单号 or ''}")
+                self.recog_list.addItem(f"【{order.车牌}】 交货单号: {order.交货单号 or ''}")
             for order in 结果.待人工:
                 self.recog_list.addItem(f"待人工: 【{order.车牌}】 {order.异常原因 or ''}")
         except Exception as e:

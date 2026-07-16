@@ -14,6 +14,8 @@ def main():
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     qt_handler.setFormatter(formatter)
     logging.getLogger().addHandler(qt_handler)
+    # Ensure INFO and above are handled so info-level logs reach the UI
+    logging.getLogger().setLevel(logging.INFO)
 
     app = QApplication(sys.argv)
     window = MainWindow()

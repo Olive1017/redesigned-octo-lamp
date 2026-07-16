@@ -12,6 +12,7 @@ from core.models import Order, PhotoLabel
 from core import naming
 import config
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+import logging
 
 
 class Collager:
@@ -63,7 +64,9 @@ def _加载字体(字号: int):
                 return ImageFont.truetype(p, 字号)
             except Exception:
                 continue
-    print("[拼图器] 警告：未找到可用中文字体，信息条可能显示为方框。请在 config.LABEL_FONT_CANDIDATES 补充字体路径。")
+    logging.getLogger(__name__).warning(
+        "[拼图器] 警告：未找到可用中文字体，信息条可能显示为方框。请在 config.LABEL_FONT_CANDIDATES 补充字体路径。"
+    )
     return ImageFont.load_default()
 
 

@@ -61,14 +61,7 @@ SLOT_回单 = "客户签收回单"
 MARK_二合一 = "二合一"
 MARK_三合一 = "三合一"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("uploader.log", encoding="utf-8"),
-    ],
-)
+# 使用模块级 logger，应用入口负责配置 handler/level
 log = logging.getLogger("uploader")
 
 

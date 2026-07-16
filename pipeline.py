@@ -16,6 +16,7 @@ from steps.writer import Writer
 from steps.validator import Validator
 from steps.collager import Collager
 import config
+import logging
 
 
 @dataclass
@@ -95,7 +96,9 @@ class 流水线:
                         continue
                     # 2. 车牌以文件夹名为准，识别车牌仅作校验
                     if photo.plate and photo.plate != 车牌:
-                        print(f"[流水线] 车牌不一致：文件夹={车牌} 识别={photo.plate}（以文件夹名为准）")
+                        logging.getLogger("pipeline").warning(
+                            f"[流水线] 车牌不一致：文件夹={车牌} 识别={photo.plate}（以文件夹名为准）"
+                        )
                     photo.plate = 车牌
                     order.加照片(photo)
                     # 3. 就地重命名图片 {车牌}_{类别}
