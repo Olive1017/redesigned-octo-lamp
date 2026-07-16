@@ -221,6 +221,7 @@ def 进入费用录入(page: Page):
 
 # ==================== 按交货单号查询 ====================)
 def 查询交货单号(page: Page, 交货单号: str) -> bool:
+    # 填单号 + 点查询
     表单项 = page.locator(".el-form-item").filter(
         has=page.locator(".el-form-item__label", has_text=re.compile(r"^交货单号"))
     )
@@ -228,33 +229,27 @@ def 查询交货单号(page: Page, 交货单号: str) -> bool:
     box.click(); box.fill(""); box.fill(交货单号)
     page.get_by_role("button", name=re.compile("查询")).click()
 
-    mask = page.locator(".el-loading-mask")
-    try: mask.first.wait_for(state="visible", timeout=2000)
-    except PWTimeout: pass
-    try: mask.first.wait_for(state="hidden", timeout=15000)
-    except PWTimeout: pass
-    page.wait_for_timeout(300)
-
-    # 母行没出来 = 查无此单，6 秒内快速返回，别卡
-    箭头 = page.locator(".el-table__expand-icon:visible").first
-    try:
-        箭头.wait_for(state="visible", timeout=6000)
-    except PWTimeout:
-        return False
-
-    # 已展开就别再点（二次点击会收起来）
-    if "expanded" not in (箭头.get_attribute("class") or ""):
-        箭头.scroll_into_view_if_needed()
-        箭头.click()
-
-    # 确认子表真渲染出来（“交货单号”表头出现）
-    try:
-        page.locator("th").filter(
-            has_text=re.compile(r"^\s*交货单号\s*$")
-        ).first.wait_for(state="visible", timeout=8000)
-        return True
-    except PWTimeout:
-        return False
+    # 关键：不靠“箭头出现了”判断（旧结果的箭头会骗过去），
+    # 而是反复“展开 + 检查本单号是否真的出现在子表里”，直到看见它为止。
+    # 这样即使新数据慢一拍，也会一直等到本单号就位，绝不读上一单。
+    命中 = page.locator("td:visible").filter(
+        has_text=re.compile(rf"^\s*{re.escape(交货单号)}\s*$")
+    )
+    截止 = time.time() + 15          # 最多等 15 秒
+    while time.time() < 截止:
+        # 本单号已经在子表里出现 = 新结果就位，收工
+        if 命中.count() > 0:
+            return True
+        # 母行出现且未展开，就点开它
+        箭头 = page.locator(".el-table__expand-icon:visible").first
+        if 箭头.count() and "expanded" not in (箭头.get_attribute("class") or ""):
+            try:
+                箭头.scroll_into_view_if_needed()
+                箭头.click()
+            except Exception:
+                pass
+        page.wait_for_timeout(400)
+    return False   # 15 秒都没等到本单号 = 查无此单
     
 
 def 找行(page: Page, 交货单号: str):
@@ -287,18 +282,44 @@ def 行已录入(row) -> bool:
 
 
 # ==================== 录入 + 上传一行 ====================
+def _列类(page: Page, 列名前缀: str) -> Optional[str]:
+    """按表头文字前缀，动态解析它的 el-table_N_column_M 列类（数字每次会变）"""
+    th = page.locator("th").filter(
+        has_text=re.compile(rf"^\s*{re.escape(列名前缀)}")
+    ).first
+    try:
+        th.wait_for(state="attached", timeout=3000)
+    except PWTimeout:
+        return None
+    m = re.search(r"(el-table_\d+_column_\d+)", th.get_attribute("class") or "")
+    return m.group(1) if m else None
+
+def 填含税金额如为空(page: Page, 费用名: str = "干线运费", 金额: str = 含税金额):
+    列类 = _列类(page, "含税金额")   # ^含税金额 前缀，天然排除“不含税金额”
+    if not 列类:
+        log.warning("找不到“含税金额”列，跳过填金额")
+        return
+    行 = page.locator("tr").filter(
+        has=page.locator("td .cell", has_text=re.compile(r"^\s*干线运费"))
+    ).first
+    inp = 行.locator(f"td.{列类} input.el-input__inner")
+    try:
+        if not (inp.input_value() or "").strip():   # 只有空才填，填过就跳过
+            inp.fill(金额)
+    except PWTimeout:
+        log.warning("干线运费·含税金额 输入框没找到，跳过填金额")
+
+
 def 录入一行(page: Page, row, d: Delivery):
-    row.get_by_role("button", name="录入", exact=True).click()      
+    row.get_by_role("button", name="录入", exact=True).click()
     page.wait_for_timeout(800)
 
-    amount = page.locator(".cell .el-input__inner").first            
-    if amount.count() and not amount.input_value().strip():
-        amount.fill(含税金额)
+    填含税金额如为空(page, "干线运费", 含税金额)         # ← 精准填“干线运费·含税金额”
 
-    上传位(page, SLOT_轨迹, 确保小于3MB(d.三合一))        # 轨迹截图 <- 三合一
-    上传位(page, SLOT_回单, 确保小于3MB(d.二合一))        # 客户签收回单 <- 二合一
+    上传位(page, SLOT_轨迹, 确保小于3MB(d.三合一))       # 轨迹截图 ← 三合一
+    上传位(page, SLOT_回单, 确保小于3MB(d.二合一))       # 客户签收回单 ← 二合一
 
-    page.get_by_role("button", name="确认").click()                    # 只确认，不提交！
+    page.get_by_role("button", name="确认", exact=True).click()   # 只确认，不提交
     page.wait_for_load_state("networkidle")
 
 
@@ -318,28 +339,34 @@ def 上传位(page: Page, 位名: str, 文件: Path):
 
 # ==================== 处理一个交货单号 ====================
 def 处理一个(page: Page, d: Delivery, 结果表):
-    # 拼图缺失 -> 硬故障
     if not d.二合一 or not d.三合一:
         标黄(结果表, d.交货单号, "二合一/三合一拼图缺失")
         return
-    查询交货单号(page, d.交货单号)
-    row = 找行(page, d.交货单号)
-    if row is None:
+
+    if not 查询交货单号(page, d.交货单号):     # ← 现在真的会用返回值
         标黄(结果表, d.交货单号, "页面查不到该交货单号")
         return
+
+    row = 找行(page, d.交货单号)
+    if row is None:
+        标黄(结果表, d.交货单号, "展开后仍未定位到子行")
+        return
+
     if 行已录入(row):
         log.info("✔ %s 已录入，跳过", d.交货单号)
         结果表.append(结果(d.交货单号, "跳过", "已录入"))
         return
+
     try:
         录入一行(page, row, d)
         log.info("⬆ %s 上传完成", d.交货单号)
         结果表.append(结果(d.交货单号, "成功"))
-    except RuntimeError as e:                 # 压缩失败等硬故障
+    except RuntimeError as e:        # 压缩失败、上传超时等硬故障
         标黄(结果表, d.交货单号, str(e))
-    except (PWTimeout, Exception) as e:        # 上传报错
+    except PWTimeout as e:           # 页面元素超时
+        标黄(结果表, d.交货单号, f"上传失败（超时）：{e}")
+    except Exception as e:           # 其它未预期
         标黄(结果表, d.交货单号, f"上传失败：{e}")
-
 
 def 标黄(结果表, 交货单号, 原因):
     log.warning("🔴 标黄人工 %s：%s", 交货单号, 原因)
