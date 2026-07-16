@@ -48,3 +48,4 @@ auth_state.json
 上传报告_*.csv
 .env
 .png
+captcha_*.png

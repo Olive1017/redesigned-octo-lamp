@@ -102,23 +102,23 @@ def 尝试验证码登录(page: Page, 次数: int = 5) -> bool:
     page.get_by_placeholder("密码").fill(LMS_PASSWORD)    # ← 换成你已生效的密码定位
     for n in range(次数):
         try:
-            图 = page.locator(验证码图).first.screenshot(path=f"captcha_{n}.png")
+            图 = page.locator(验证码图).first.screenshot()
             码 = 识别验证码(图)
-            print(f"[验证码] 第{n+1}次 识别 = {码!r}")
+            log.info(f"[验证码] 第{n+1}次 识别 = {码!r}")
             框 = page.get_by_placeholder("验证码")
             框.fill("")            # 清掉上一次的
             框.fill(码)
             page.get_by_role("button", name="登录").click()
             page.wait_for_timeout(1500)
             if "login" not in page.url.lower():
-                print(f"[验证码] 第{n+1}次 登录成功")
+                log.info(f"[验证码] 第{n+1}次 登录成功")
                 return True
             # 失败 → 点图换新验证码（不 reload，账号密码保留）
-            print(f"[验证码] 第{n+1}次 失败，点图刷新")
+            log.warning(f"[验证码] 第{n+1}次 失败，点图刷新")
             if not 刷新验证码(page, 验证码图):
-                print("  ⚠️ 点图似乎没换新验证码，可能得找专门的刷新按钮")
+                log.warning("  ⚠️ 点图似乎没换新验证码，可能得找专门的刷新按钮")
         except Exception as e:
-            print(f"[验证码] 第{n+1}次 异常: {e}")
+            log.warning(f"[验证码] 第{n+1}次 异常: {e}")
             page.wait_for_timeout(500)
     return False
 
