@@ -220,27 +220,24 @@ def 进入费用录入(page: Page):
 
 # ==================== 按交货单号查询 ====================)
 def 查询交货单号(page: Page, 交货单号: str) -> bool:
-    # 填单号 + 点查询
     交货单号 = _规整单号(交货单号)
-    表单项 = page.locator(".el-form-item").filter(
-        has=page.locator(".el-form-item__label", has_text=re.compile(r"^交货单号"))
+   
+    交货单号项 = page.locator(".el-form-item").filter(
+        has=page.locator(".el-form-item__label").filter(has_text=re.compile(r"^交货单号"))
     )
-    box = 表单项.get_by_role("textbox")
+    box = 交货单号项.get_by_role("textbox").and_(page.get_by_placeholder("请输入"))
     box.click(); box.fill(""); box.fill(交货单号)
     page.get_by_role("button", name=re.compile("查询")).click()
 
     # 关键：不靠“箭头出现了”判断（旧结果的箭头会骗过去），
     # 而是反复“展开 + 检查本单号是否真的出现在子表里”，直到看见它为止。
-    # 这样即使新数据慢一拍，也会一直等到本单号就位，绝不读上一单。
     命中 = page.locator("td:visible").filter(
         has_text=re.compile(rf"^\s*{re.escape(交货单号)}\s*$")
     )
-    截止 = time.time() + 15          # 最多等 15 秒
+    截止 = time.time() + 15   # 最多等 15 秒
     while time.time() < 截止:
-        # 本单号已经在子表里出现 = 新结果就位，收工
         if 命中.count() > 0:
             return True
-        # 母行出现且未展开，就点开它
         箭头 = page.locator(".el-table__expand-icon:visible").first
         if 箭头.count() and "expanded" not in (箭头.get_attribute("class") or ""):
             try:
@@ -294,6 +291,7 @@ def _列类(page: Page, 列名前缀: str) -> Optional[str]:
     m = re.search(r"(el-table_\d+_column_\d+)", th.get_attribute("class") or "")
     return m.group(1) if m else None
 
+
 def 填含税金额如为空(page: Page, 费用名: str = "干线运费", 金额: str = 含税金额):
     列类 = _列类(page, "含税金额")   # ^含税金额 前缀，天然排除“不含税金额”
     if not 列类:
@@ -314,13 +312,13 @@ def 录入一行(page: Page, row, d: Delivery):
     row.get_by_role("button", name="录入", exact=True).click()
     page.wait_for_timeout(800)
 
-    填含税金额如为空(page, "干线运费", 含税金额)         # ← 精准填“干线运费·含税金额”
+    填含税金额如为空(page, "干线运费", 含税金额)   # ← 精准填“干线运费·含税金额”
 
-    上传位(page, SLOT_轨迹, 确保小于3MB(d.三合一))       # 轨迹截图 ← 三合一
-    上传位(page, SLOT_回单, 确保小于3MB(d.二合一))       # 客户签收回单 ← 二合一
+    上传位(page, SLOT_轨迹, 确保小于3MB(d.三合一))   # 轨迹截图 ← 三合一
+    上传位(page, SLOT_回单, 确保小于3MB(d.二合一))   # 客户签收回单 ← 二合一
 
-    page.get_by_role("button", name="确认", exact=True).click()   # 只确认，不提交
-    page.wait_for_load_state("networkidle")
+    确认按钮 = page.get_by_role("button", name="确认", exact=True)
+    确认按钮.click()   # 只确认，不提交（这一步通常就会把弹窗关掉）
 
 
 def 上传位(page: Page, 位名: str, 文件: Path):

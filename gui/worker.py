@@ -59,6 +59,6 @@ class 上传Worker(QThread):
                 self._login_event.wait()
 
             上传main(self.目录, 等待人工=等待人工)
-            self.完成信号.emit("上传流程结束，详见目录下的 上传报告_*.csv")
+            self.完成信号.emit("上传流程结束")
         except Exception as e:
             self.错误信号.emit(f"上传失败: {e}")
