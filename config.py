@@ -1,5 +1,19 @@
 """配置文件 - 所有可变参数集中管理"""
 
+import os
+import sys
+from dotenv import load_dotenv
+
+base_dir = getattr(sys, "_MEIPASS", None) or os.path.dirname(__file__)
+dotenv_path = os.path.join(base_dir, ".env")
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    # 开发时也尝试当前工作目录的 .env
+    cwd = os.path.join(os.getcwd(), ".env")
+    if os.path.exists(cwd):
+        load_dotenv(cwd)
+
 # OCR 服务配置
 OCR_URL = "http://172.30.197.3:10000/OcrPlugins/core/ocr"
 OCR_TIMEOUT = 30
@@ -44,5 +58,26 @@ DEFAULT_INPUT_DIR = ""
 
 # 并发配置
 MAX_WORKERS = 20
+
+# 登录
+LOGIN_URL = os.getenv("LOGIN_URL", "https://lms.chem.petrochina.com.cn/#/login")
+LMS_ACCOUNT = os.getenv("LMS_ACCOUNT", "")
+LMS_PASSWORD = os.getenv("LMS_PASSWORD", "")
+
+# 上传/文件/超时
+含税金额 = os.getenv("含税金额", "2280")
+MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", 3 * 1024 * 1024))
+UPLOAD_TIMEOUT_MS = int(os.getenv("UPLOAD_TIMEOUT_MS", 30_000))
+STORAGE_STATE = os.getenv("STORAGE_STATE", "auth_state.json")
+
+# 标记/槽位
+SLOT_轨迹 = os.getenv("SLOT_轨迹", "轨迹截图")
+SLOT_回单 = os.getenv("SLOT_回单", "客户签收回单")
+MARK_二合一 = os.getenv("MARK_二合一", "二合一")
+MARK_三合一 = os.getenv("MARK_三合一", "三合一")
+
+# 浏览器选项
+PLAYWRIGHT_CHANNEL = os.getenv("PLAYWRIGHT_CHANNEL", "msedge")
+HEADLESS = os.getenv("HEADLESS", "False").lower() in ("1", "true", "yes")
 
 

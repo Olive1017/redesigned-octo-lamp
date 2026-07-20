@@ -1,18 +1,3 @@
-"""
-steps/uploader.py
-
-物流管理系统(LMS) 公路费用录入 —— RPA 自动上传拼图（只上传、不提交）。
-
-设计（精简版，与讨论一致）：
-- 直接按文件夹名里的交货单号逐个查询 -> 录入 -> 上传两张拼图 -> 确认。
-  不读表格、不分组、不提交（提交交给人工）。
-- 幂等/可反复运行：行状态已是“已录入”则跳过，绝不重复上传。
-- 两种命运：
-    🟢 成功   -> 上传完成（状态变已录入）
-    🔴 标黄   -> 拼图缺失 / 页面查无该交货单号 / 压不到3MB / 上传报错
-- 验证码：人工登录一次，storage_state 缓存会话，之后复用。
-- 3MB 限制：上传前等比压缩。
-"""
 from __future__ import annotations
 
 import os
@@ -35,31 +20,22 @@ from playwright.sync_api import (
     TimeoutError as PWTimeout,
 )
 
-from dotenv import load_dotenv
-load_dotenv()                          # ← 必须在下面两行之前
-LMS_ACCOUNT = os.environ.get("LMS_ACCOUNT", "")
-LMS_PASSWORD = os.environ.get("LMS_PASSWORD", "")
+from config import (
+    LOGIN_URL,
+    LMS_ACCOUNT,
+    LMS_PASSWORD,
+    含税金额,
+    MAX_FILE_BYTES,
+    UPLOAD_TIMEOUT_MS,
+    STORAGE_STATE,
+    SLOT_轨迹,
+    SLOT_回单,
+    MARK_二合一,
+    MARK_三合一,
+    PLAYWRIGHT_CHANNEL,
+    HEADLESS,
+)
 
-# ==================== 配置区（建议以后移到 config.py） ====================
-LOGIN_URL = "https://lms.chem.petrochina.com.cn/#/login"
-
-# 账号密码：从环境变量读，千万别写死进代码提交！
-#   Windows PowerShell:  $env:LMS_ACCOUNT="..."; $env:LMS_PASSWORD="..."
-LMS_ACCOUNT = os.environ.get("LMS_ACCOUNT", "")
-LMS_PASSWORD = os.environ.get("LMS_PASSWORD", "")
-
-含税金额 = "2280"              # 固定值
-MAX_FILE_BYTES = 3 * 1024 * 1024  # 3MB 上限
-UPLOAD_TIMEOUT_MS = 30_000
-STORAGE_STATE = "auth_state.json"
-
-# 上传位→拼图映射：轨迹截图←三合一；客户签收回单←二合一
-SLOT_轨迹 = "轨迹截图"
-SLOT_回单 = "客户签收回单"
-
-# 拼图文件名识别（文件夹内包含这些子串）
-MARK_二合一 = "二合一"
-MARK_三合一 = "三合一"
 
 # 使用模块级 logger，应用入口负责配置 handler/level
 log = logging.getLogger("uploader")
@@ -179,7 +155,7 @@ def 确保小于3MB(路径: Path) -> Path:
 
 # ==================== 登录（会话复用） ====================
 def 准备页面(pw: Playwright,等待人工=None):
-    browser = pw.chromium.launch(channel="msedge", headless=False)
+    browser = pw.chromium.launch(channel=PLAYWRIGHT_CHANNEL, headless=HEADLESS)
     if Path(STORAGE_STATE).exists():
         context = browser.new_context(storage_state=STORAGE_STATE)
     else:
