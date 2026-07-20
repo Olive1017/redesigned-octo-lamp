@@ -27,12 +27,10 @@ from config import (
     含税金额,
     MAX_FILE_BYTES,
     UPLOAD_TIMEOUT_MS,
-    STORAGE_STATE,
     SLOT_轨迹,
     SLOT_回单,
     MARK_二合一,
     MARK_三合一,
-    PLAYWRIGHT_CHANNEL,
     HEADLESS,
 )
 
@@ -66,7 +64,6 @@ def 刷新验证码(page: Page, 验证码图: str) -> bool:
 
 def 尝试验证码登录(page: Page, 次数: int = 5) -> bool:
     验证码图 = 'img[src^="/api/captcha"]'
-    # 账号密码只填一次——不 reload，字段不会被清空
     page.get_by_placeholder("账号").fill(LMS_ACCOUNT)     # ← 换成你已生效的账号定位
     page.get_by_placeholder("密码").fill(LMS_PASSWORD)    # ← 换成你已生效的密码定位
     for n in range(次数):
@@ -154,12 +151,24 @@ def 确保小于3MB(路径: Path) -> Path:
 
 
 # ==================== 登录（会话复用） ====================
-def 准备页面(pw: Playwright,等待人工=None):
-    browser = pw.chromium.launch(channel=PLAYWRIGHT_CHANNEL, headless=HEADLESS)
-    if Path(STORAGE_STATE).exists():
-        context = browser.new_context(storage_state=STORAGE_STATE)
-    else:
-        context = browser.new_context()
+def 启动浏览器(pw: Playwright, 通道列表=( "msedge","chrome"), 每通道重试=2, **启动参数):
+    """按顺序逐个试浏览器通道，每个通道允许重试；全部失败才报错。"""
+    最后异常 = None
+    for 通道 in 通道列表:
+        for 第 in range(1, 每通道重试 + 1):
+            try:
+                log.info(f"尝试启动浏览器：{通道}（第{第}次）")
+                return pw.chromium.launch(channel=通道, **启动参数)
+            except Exception as e:
+                最后异常 = e
+                log.warning(f"浏览器 {通道} 启动失败（第{第}次）：{e}")
+                time.sleep(1)   # 稍等一下再重试，避开瞬时冲突/更新
+    raise RuntimeError(f"所有浏览器通道都启动失败，最后一次：{最后异常}")
+
+def 准备页面(pw: Playwright, 等待人工=None):
+    browser = 启动浏览器(pw, headless=False, args=["--start-maximized"])
+   
+    context = browser.new_context()
     page = context.new_page()
     page.goto(LOGIN_URL)
     page.wait_for_timeout(2000)
@@ -170,18 +179,17 @@ def 准备页面(pw: Playwright,等待人工=None):
 
 def 登录(page: Page, context, 等待人工=None):
     page.goto(LOGIN_URL)
-    page.wait_for_load_state("networkidle")
+    # 等验证码图出现再继续（比 networkidle 稳：这是 SPA，networkidle 可能一直不静默）
+    page.locator('img[src^="/api/captcha"]').wait_for(state="visible", timeout=30000)
     if 尝试验证码登录(page):
-        context.storage_state(path=STORAGE_STATE)   # 保持你原来的会话保存写法
-        return
+        return   # 已删掉 context.storage_state(path=STORAGE_STATE)：不再保存会话
     # OCR 多次失败 → 转人工：先填好账号密码，人只需输验证码
-    page.get_by_placeholder("账号").fill(LMS_ACCOUNT)     # 同上，用你能用的定位
+    page.get_by_placeholder("账号").fill(LMS_ACCOUNT)
     page.get_by_placeholder("密码").fill(LMS_PASSWORD)
     if 等待人工:
         等待人工()          # GUI：弹窗提示人工输验证码后点继续
     else:
         input("请在浏览器手动输入验证码并登录，然后回车继续...")
-    context.storage_state(path=STORAGE_STATE)
 
 
 # ==================== 导航（只需一次） ====================

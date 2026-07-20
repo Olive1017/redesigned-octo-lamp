@@ -68,7 +68,7 @@ LMS_PASSWORD = os.getenv("LMS_PASSWORD", "")
 含税金额 = os.getenv("含税金额", "2280")
 MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", 3 * 1024 * 1024))
 UPLOAD_TIMEOUT_MS = int(os.getenv("UPLOAD_TIMEOUT_MS", 30_000))
-STORAGE_STATE = os.getenv("STORAGE_STATE", "auth_state.json")
+
 
 # 标记/槽位
 SLOT_轨迹 = os.getenv("SLOT_轨迹", "轨迹截图")
@@ -77,7 +77,6 @@ MARK_二合一 = os.getenv("MARK_二合一", "二合一")
 MARK_三合一 = os.getenv("MARK_三合一", "三合一")
 
 # 浏览器选项
-PLAYWRIGHT_CHANNEL = os.getenv("PLAYWRIGHT_CHANNEL", "msedge")
 HEADLESS = os.getenv("HEADLESS", "False").lower() in ("1", "true", "yes")
 
 
