@@ -5,7 +5,6 @@ import re
 import sys
 import csv
 import time
-import tempfile
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +24,6 @@ from config import (
     LMS_ACCOUNT,
     LMS_PASSWORD,
     含税金额,
-    MAX_FILE_BYTES,
     UPLOAD_TIMEOUT_MS,
     SLOT_轨迹,
     SLOT_回单,
@@ -130,30 +128,13 @@ def 扫描文件夹(输入目录: Path):
     return deliveries
 
 
-# ==================== 3MB 压缩 ====================
-def 确保小于3MB(路径: Path) -> Path:
-    if 路径.stat().st_size <= MAX_FILE_BYTES:
-        return 路径
-    img = Image.open(路径).convert("RGB")
-    tmp = Path(tempfile.gettempdir()) / f"cmp_{路径.name}"
-    for q in range(90, 39, -10):
-        img.save(tmp, "JPEG", quality=q)
-        if tmp.stat().st_size <= MAX_FILE_BYTES:
-            log.info("压缩 %s -> quality=%d", 路径.name, q)
-            return tmp
-    w, h = img.size
-    for scale in (0.8, 0.6, 0.5):
-        img.resize((int(w * scale), int(h * scale))).save(tmp, "JPEG", quality=75)
-        if tmp.stat().st_size <= MAX_FILE_BYTES:
-            log.info("压缩 %s -> scale=%.1f", 路径.name, scale)
-            return tmp
-    raise RuntimeError(f"{路径.name} 无法压到 3MB 以内")
-
 
 # ==================== 登录（会话复用） ====================
-def 启动浏览器(pw: Playwright, 通道列表=( "msedge","chrome"), 每通道重试=2, **启动参数):
+def 启动浏览器(pw: Playwright, 通道列表=("msedge", "chrome"), 每通道重试=2, **启动参数):
     """按顺序逐个试浏览器通道，每个通道允许重试；全部失败才报错。"""
+    错误信息 = {}
     最后异常 = None
+    
     for 通道 in 通道列表:
         for 第 in range(1, 每通道重试 + 1):
             try:
@@ -161,9 +142,19 @@ def 启动浏览器(pw: Playwright, 通道列表=( "msedge","chrome"), 每通道
                 return pw.chromium.launch(channel=通道, **启动参数)
             except Exception as e:
                 最后异常 = e
+                错误信息.setdefault(通道, []).append(str(e))
                 log.warning(f"浏览器 {通道} 启动失败（第{第}次）：{e}")
-                time.sleep(1)   # 稍等一下再重试，避开瞬时冲突/更新
-    raise RuntimeError(f"所有浏览器通道都启动失败，最后一次：{最后异常}")
+                
+                # 浏览器不存在时直接跳过
+                if "executable" in str(e).lower() or "not found" in str(e).lower():
+                    break
+                    
+                time.sleep(1)
+    
+    # 构建详细错误信息
+    详情 = "；".join([f"{k}: {v[-1]}" for k, v in 错误信息.items()])
+    raise RuntimeError(f"所有浏览器启动失败: {详情}")
+
 
 def 准备页面(pw: Playwright, 等待人工=None):
     browser = 启动浏览器(pw, headless=False, args=["--start-maximized"])
@@ -298,8 +289,8 @@ def 录入一行(page: Page, row, d: Delivery):
 
     填含税金额如为空(page, "干线运费", 含税金额)   # ← 精准填“干线运费·含税金额”
 
-    上传位(page, SLOT_轨迹, 确保小于3MB(d.三合一))   # 轨迹截图 ← 三合一
-    上传位(page, SLOT_回单, 确保小于3MB(d.二合一))   # 客户签收回单 ← 二合一
+    上传位(page, SLOT_轨迹, d.三合一)   # 轨迹截图 ← 三合一
+    上传位(page, SLOT_回单, d.二合一)   # 客户签收回单 ← 二合一
 
     确认按钮 = page.get_by_role("button", name="确认", exact=True)
     确认按钮.click()   # 只确认，不提交（这一步通常就会把弹窗关掉）

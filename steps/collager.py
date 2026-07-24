@@ -7,12 +7,15 @@ Collager 只持配置，实际图像拼接为模块级纯函数。
 """
 
 import os
+from pathlib import Path
 from typing import List, Optional
+import tempfile
 from core.models import Order, PhotoLabel
 from core import naming
 import config
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import logging
+from config import MAX_FILE_BYTES
 
 
 class Collager:
@@ -32,6 +35,7 @@ class Collager:
         画布 = _横向拼接([_打开(验车[0].path), _打开(回单[0].path)], self.背景色)
         out = os.path.join(order.文件夹路径, naming.拼图名(order.车牌, "二合一"))
         _保存(画布, out, self.质量)
+        self._压缩拼图(out) 
         order.二合一路径 = out
         return out
 
@@ -50,8 +54,43 @@ class Collager:
         画布 = _纵向拼接([信息条, 上图, 下排], self.背景色)
         out = os.path.join(order.文件夹路径, naming.拼图名(order.车牌, "三合一"))
         _保存(画布, out, self.质量)
+        self._压缩拼图(out)
         order.三合一路径 = out
         return out
+
+    def _压缩拼图(self, 路径: str) -> None:
+        """压缩拼图到配置的MAX_FILE_BYTES以内"""
+        文件路径 = Path(路径)
+        if 文件路径.stat().st_size <= config.MAX_FILE_BYTES:
+            return
+        
+        img = Image.open(文件路径).convert("RGB")
+        tmp = Path(tempfile.gettempdir()) / f"cmp_{文件路径.name}"
+        
+        try:
+            # 先降质量
+            for q in range(90, 39, -10):
+                img.save(tmp, "JPEG", quality=q)
+                if tmp.stat().st_size <= config.MAX_FILE_BYTES:
+                    logging.getLogger(__name__).info("压缩 %s -> quality=%d", 文件路径.name, q)
+                    tmp.replace(文件路径)
+                    return
+            
+            # 再降尺寸
+            w, h = img.size
+            for scale in (0.8, 0.6, 0.5):
+                img.resize((int(w * scale), int(h * scale))).save(tmp, "JPEG", quality=75)
+                if tmp.stat().st_size <= config.MAX_FILE_BYTES:
+                    logging.getLogger(__name__).info("压缩 %s -> scale=%.1f", 文件路径.name, scale)
+                    tmp.replace(文件路径)
+                    return
+            
+            raise RuntimeError(f"{文件路径.name} 无法压到 {config.MAX_FILE_BYTES} 字节以内")
+        finally:
+            # 确保临时文件被清理
+            if tmp.exists():
+                tmp.unlink()
+
 
 
 # ---- 图像处理纯函数 ----
@@ -134,3 +173,7 @@ def _纵向拼接(imgs: List[Image.Image], 背景色) -> Image.Image:
 
 def _保存(img: Image.Image, path: str, 质量: int):
     img.save(path, format="JPEG", quality=质量)
+
+
+
+
